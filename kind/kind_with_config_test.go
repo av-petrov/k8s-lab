@@ -68,7 +68,7 @@ func newDeployment(namespace string, name string, replicaCount int32) *appsv1.De
 			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "test-app"}},
-				Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "nginx", Image: "nginx"}}},
+				Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "nginx", Image: "localhost:5001/mirror/nginx:1.29.3"}}},
 			},
 		},
 	}
