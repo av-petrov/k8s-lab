@@ -1,0 +1,61 @@
+# --- Go build artifacts ---
+/bin/
+ /out/
+ /dist/
+ /build/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# --- Go tool caches ---
+# кэш зависимостей и сборки
+/go.sum.tmp
+/.cache/
+/tmp/
+/vendor/
+
+# --- Go coverage / профилирование ---
+*.cover
+*.coverprofile
+*.cov
+coverage.txt
+coverage.out
+profile.out
+cpu.prof
+mem.prof
+
+# --- Logs ---
+*.log
+/logs/
+/debug.log
+
+# --- IDE / редакторы ---
+# VS Code
+.vscode/
+/.idea/
+/*.code-workspace
+
+# JetBrains (GoLand)
+.idea/
+
+# MacOS системные файлы
+.DS_Store
+
+# --- e2e-тесты ---
+# kubeconfig, логи, артефакты kind/k3d/k8s
+/test-results/
+/e2e-logs/
+/artifacts/
+/kind-logs/
+/kubeconfig
+*.yaml.bak
+
+# --- Local tools / configs ---
+.env
+.env.*
+.local/
+*.local.yaml
