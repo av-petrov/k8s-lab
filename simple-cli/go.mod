@@ -1,4 +1,4 @@
-module github.com/av-petrov/golearning/kubernetes-cli
+module github.com/av-petrov/k8s-lab/simple-cli
 
 go 1.25.5
 
