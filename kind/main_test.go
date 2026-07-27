@@ -17,30 +17,46 @@ limitations under the License.
 package kind
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"sigs.k8s.io/e2e-framework/pkg/env"
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/envfuncs"
+	"sigs.k8s.io/e2e-framework/support/kind"
 )
 
 var testenv env.Environment
 
+func init() {
+	fmt.Println("init from main_test.go")
+}
+
 func TestMain(m *testing.M) {
 	testenv, _ = env.NewFromFlags()
-	//	kindClusterName := envconf.RandomName("kind-with-config", 16)
+	kindClusterName := envconf.RandomName("kind-e2e", 20)
 	namespace := envconf.RandomName("kind-ns", 16)
 
 	testenv.Setup(
-		//		envfuncs.CreateClusterWithConfig(kind.NewProvider(), kindClusterName, "dev01.yaml", kind.WithImage("kindest/node:v1.34.0")),
+		envfuncs.CreateClusterWithConfig(
+			kind.NewProvider(),
+			kindClusterName,
+			"dev02.yaml",
+			kind.WithImage(
+				"kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5",
+			),
+		),
 		envfuncs.CreateNamespace(namespace),
 	)
 
+	logsDir := filepath.Join("logs", kindClusterName)
+
 	testenv.Finish(
 		envfuncs.DeleteNamespace(namespace),
-		envfuncs.ExportClusterLogs("kind-dev01", "./logs"),
-		//		envfuncs.DestroyCluster(kindClusterName),
+		envfuncs.ExportClusterLogs(kindClusterName, logsDir),
+		envfuncs.DestroyCluster(kindClusterName),
 	)
 	os.Exit(testenv.Run(m))
 }
