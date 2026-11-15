@@ -1,0 +1,67 @@
+# Cilium для kind-dev01. Чарт: cilium/cilium (https://helm.cilium.io), версия — versions.env.
+cluster:
+  name: kind-dev01
+  id: 0
+
+# --- API-сервер напрямую, а не через ClusterIP 10.96.0.1 -------------------
+# kube-proxy нет, поэтому до старта Cilium ClusterIP не работает.
+# dev01-control-plane резолвится из нод через docker DNS (сеть kind). Совпадает с controlPlaneEndpoint в kubeadm.
+k8sServiceHost: dev01-control-plane
+k8sServicePort: 6443
+
+# --- Сервисы на eBPF вместо kube-proxy ---------------------------------
+kubeProxyReplacement: true
+socketLB:
+  enabled: true          # connect()-time LB в cgroup; в kind работает (cgroup v2, общее ядро VM)
+bpf:
+  masquerade: true       # eBPF SNAT вместо iptables MASQUERADE
+  hostLegacyRouting: false   # eBPF host routing (ядро 6.8 подходит), без лишнего прохода через netfilter хоста
+loadBalancer:
+  mode: snat             # DSR/hybrid не работают в tunnel-режиме и не нужны в kind
+  acceleration: disabled # XDP на veth нод kind не даёт выигрыша/не поддерживается нормально
+nodePort:
+  enabled: true
+
+# --- IPAM / маршрутизация (как в старом кластере) -----------------------
+ipam:
+  mode: kubernetes       # podCIDR от kube-controller-manager (10.244.0.0/16)
+routingMode: tunnel
+tunnelProtocol: vxlan
+
+# Перезапускать агентов при смене cilium-config (иначе новые значения не применяются до ручного restart).
+rollOutCiliumPods: true
+
+operator:
+  replicas: 1
+
+# --- Политики ---------------------------------------------------------
+# Enforce включён 2026-11-15 после проверки в audit mode (hubble observe --verdict AUDIT).
+# Для отладки новых политик можно временно вернуть true (make cilium-upgrade) — нарушения станут AUDIT, а не DROPPED.
+policyAuditMode: false
+policyEnforcementMode: default
+
+# --- Hubble -----------------------------------------------------------
+hubble:
+  enabled: true
+  metrics:
+    enableOpenMetrics: true
+    enabled:
+      - dns
+      - drop
+      - tcp
+      - flow
+      - port-distribution
+      - "policy:sourceContext=workload-name|reserved-identity;destinationContext=workload-name|reserved-identity;labelsContext=source_namespace,destination_namespace"
+  relay:
+    enabled: true
+    replicas: 1
+  ui:
+    enabled: true
+    replicas: 1
+    service:
+      type: ClusterIP
+    ingress:
+      enabled: false
+
+prometheus:
+  enabled: true

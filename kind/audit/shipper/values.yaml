@@ -1,0 +1,155 @@
+# Fluent Bit: доставка audit-логов kube-apiserver. Чарт fluent/fluent-bit, версия — versions.env.
+# Namespace audit-logging. DaemonSet только на control-plane: audit.log пишется там.
+kind: DaemonSet
+
+nodeSelector:
+  node-role.kubernetes.io/control-plane: ""
+tolerations:
+  - key: node-role.kubernetes.io/control-plane
+    operator: Exists
+    effect: NoSchedule
+
+# Kubernetes-фильтр не нужен -> ClusterRole не создаём.
+rbac:
+  create: false
+serviceAccount:
+  create: true
+
+# Убираем дефолтные монтирования /var/log и /var/lib/docker/containers из чарта.
+daemonSetVolumes:
+  - name: audit-logs
+    hostPath:
+      path: /var/log/kubernetes/audit
+      type: Directory
+  - name: state
+    hostPath:
+      path: /var/lib/fluent-bit-audit   # offset'ы tail: после рестарта пода повторной отправки нет
+      type: DirectoryOrCreate
+  # Ключ SA GCP (роль только roles/logging.logWriter). Secret создаётся вручную при bootstrap
+  # (make gcp-logging-secret), в Git его нет. Пока Secret не создан, под висит в ContainerCreating — так и задумано.
+  - name: gcp-sa
+    secret:
+      secretName: gcp-logging-sa
+daemonSetVolumeMounts:
+  - name: audit-logs
+    mountPath: /var/log/kubernetes/audit
+    readOnly: true
+  - name: state
+    mountPath: /var/lib/fluent-bit
+  - name: gcp-sa
+    mountPath: /var/run/secrets/gcp
+    readOnly: true
+
+resources:
+  requests:
+    cpu: 20m
+    memory: 32Mi
+  limits:
+    memory: 128Mi
+
+config:
+  service: |
+    [SERVICE]
+        Daemon Off
+        Flush 5
+        Log_Level info
+        Parsers_File /fluent-bit/etc/parsers.conf
+        Parsers_File /fluent-bit/etc/conf/custom_parsers.conf
+        HTTP_Server On
+        HTTP_Listen 0.0.0.0
+        HTTP_Port 2020
+        Health_Check On
+        storage.path /var/lib/fluent-bit/buffer
+        storage.sync normal
+        storage.backlog.mem_limit 16M
+
+  customParsers: |
+    [PARSER]
+        Name        k8s_audit
+        Format      json
+        Time_Key    stageTimestamp
+        Time_Format %Y-%m-%dT%H:%M:%S.%LZ
+        Time_Keep   On
+
+  inputs: |
+    [INPUT]
+        Name              tail
+        Tag               kube.audit
+        Path              /var/log/kubernetes/audit/audit.log
+        Parser            k8s_audit
+        DB                /var/lib/fluent-bit/audit.db
+        Read_from_Head    On
+        Refresh_Interval  5
+        Rotate_Wait       30
+        Mem_Buf_Limit     16MB
+        Buffer_Max_Size   1MB
+        storage.type      filesystem
+
+  filters: ""
+
+  outputs: |
+    # --- GCP Cloud Logging (основной приёмник) ---
+    # Logs Explorer: logName="projects/<project>/logs/kube.audit" (имя лога = tag); поля события — в jsonPayload.*
+    # Проект берётся из ключа SA. Ресурс global, кластер помечен меткой.
+    [OUTPUT]
+        Name                       stackdriver
+        Match                      kube.audit
+        google_service_credentials /var/run/secrets/gcp/key.json
+        resource                   global
+        labels                     cluster=kind-dev01
+        workers                    1
+        Retry_Limit                no_limits
+
+    # Дубль в лог пода для отладки (kubectl logs). Убрать после проверки GCP.
+    [OUTPUT]
+        Name   stdout
+        Match  kube.audit
+        Format json_lines
+
+    # --- Loki ---
+    # [OUTPUT]
+    #     Name        loki
+    #     Match       kube.audit
+    #     Host        loki-gateway.logging.svc
+    #     Port        80
+    #     Labels      job=kube-audit, cluster=kind-dev01
+    #     Label_Keys  $verb,$objectRef['resource']
+    #     Line_Format json
+    #     Retry_Limit no_limits
+
+    # --- Elasticsearch / OpenSearch ---
+    # [OUTPUT]
+    #     Name            es           # для OpenSearch: Name opensearch
+    #     Match           kube.audit
+    #     Host            es.example.com
+    #     Port            443
+    #     tls             On
+    #     HTTP_User       ${ES_USER}
+    #     HTTP_Passwd     ${ES_PASSWORD}  # из Secret через env, не в values
+    #     Index           kube-audit
+    #     Suppress_Type_Name On
+    #     Retry_Limit     no_limits
+
+    # --- S3 ---
+    # [OUTPUT]
+    #     Name             s3
+    #     Match            kube.audit
+    #     bucket           k8s-audit
+    #     region           eu-central-1
+    #     total_file_size  50M
+    #     upload_timeout   5m
+    #     use_put_object   On
+    #     s3_key_format    /kind-dev01/%Y/%m/%d/%H_%M_%S-$UUID.json.gz
+    #     compression      gzip
+
+    # --- HTTP SIEM ---
+    # [OUTPUT]
+    #     Name        http
+    #     Match       kube.audit
+    #     Host        siem.example.com
+    #     Port        443
+    #     URI         /ingest/k8s-audit
+    #     Format      json
+    #     tls         On
+    #     Header      Authorization Bearer ${SIEM_TOKEN}
+    #     Retry_Limit no_limits

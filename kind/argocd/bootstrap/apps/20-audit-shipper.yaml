@@ -1,0 +1,36 @@
+# Агент audit-логов. Multi-source: чарт из Helm-репо + values и SealedSecret из нашего Git.
+# Версию чарта держать синхронной с FLUENT_BIT_CHART_VERSION в versions.env.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: audit-shipper
+  namespace: argocd
+spec:
+  project: platform
+  sources:
+    - repoURL: https://fluent.github.io/helm-charts
+      chart: fluent-bit
+      targetRevision: 0.58.3
+      helm:
+        releaseName: audit-shipper
+        valueFiles:
+          - $values/kind/audit/shipper/values.yaml
+    - repoURL: https://github.com/av-petrov/k8s-lab.git
+      targetRevision: main
+      ref: values
+    # SealedSecret gcp-logging-sa (ключ SA GCP для выхода stackdriver).
+    - repoURL: https://github.com/av-petrov/k8s-lab.git
+      targetRevision: main
+      path: kind/audit/shipper/secrets
+      directory:
+        include: "*.sealed.yaml"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: audit-logging
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - SkipDryRunOnMissingResource=true   # CRD SealedSecret может появиться в том же цикле синка

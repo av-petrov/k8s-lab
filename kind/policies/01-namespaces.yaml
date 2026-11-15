@@ -1,0 +1,11 @@
+# Namespace приложений, к которым привязаны политики. Синхронизируются вместе с политиками (sync-wave -10).
+# argocd сюда НЕ входит: его создаёт helm при bootstrap, и Argo CD не должен владеть собственным namespace.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: audit-logging
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: litellm

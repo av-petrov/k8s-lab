@@ -1,0 +1,42 @@
+# AppProject platform. Применяется вручную при bootstrap (make argocd-bootstrap), дальше меняется через Git.
+# AppProject для платформенных компонентов: ограничены репозитории, destinations и типы ресурсов.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: Platform components of kind-dev01 (sealed-secrets, policies, audit shipper, argocd, cilium)
+  sourceRepos:
+    - https://github.com/av-petrov/k8s-lab.git
+    - https://argoproj.github.io/argo-helm
+    - https://helm.cilium.io
+    - https://fluent.github.io/helm-charts
+    - https://bitnami.github.io/sealed-secrets
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: argocd
+    - server: https://kubernetes.default.svc
+      namespace: audit-logging
+    - server: https://kubernetes.default.svc
+      namespace: litellm          # только CNP из policies/
+    - server: https://kubernetes.default.svc
+      namespace: kube-system      # Cilium, на последнем этапе
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+    - group: cilium.io
+      kind: CiliumClusterwideNetworkPolicy
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition   # CRD Argo CD / Cilium
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+  namespaceResourceBlacklist:
+    - group: ""
+      kind: ResourceQuota
+  orphanedResources:
+    warn: true

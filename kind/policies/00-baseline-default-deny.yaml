@@ -1,0 +1,54 @@
+# Default deny ingress+egress для всех НЕсистемных namespace + минимальные разрешения.
+# Исключены (политика их не выбирает):
+#   kube-system        — CoreDNS, apiserver, Cilium, Hubble relay/UI: CNI нельзя отрезать от самого себя
+#   kube-public, kube-node-lease — служебные, подов нет
+#   local-path-storage — provisioner томов kind (нужен API и hostPath)
+#   cilium-secrets     — только Secrets для L7-политик, подов нет
+#   cilium-test-1, cilium-test-ccnp1/2 — namespace `cilium connectivity test`: он сам ставит политики и ходит в world
+# Остальные namespace (default, argocd, audit-logging и любые новые) — default deny.
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: baseline-default-deny
+spec:
+  description: "Default deny for user namespaces; allow DNS (L7-visible) and kubelet probes"
+  endpointSelector:
+    matchExpressions:
+      # Exists обязателен: NotIn совпадает и с endpoint БЕЗ этой метки (reserved:health, ingress),
+      # и без него health-check Cilium между нодами попадал под default deny (найдено в audit mode).
+      - key: io.kubernetes.pod.namespace
+        operator: Exists
+      - key: io.kubernetes.pod.namespace
+        operator: NotIn
+        values:
+          - kube-system
+          - kube-public
+          - kube-node-lease
+          - local-path-storage
+          - cilium-secrets
+          - cilium-test-1
+          - cilium-test-ccnp1
+          - cilium-test-ccnp2
+  enableDefaultDeny:
+    ingress: true
+    egress: true
+  ingress:
+    # Пробы kubelet приходят с локальной ноды (entity host).
+    # remote-node не нужен: в tunnel-режиме пробы чужих нод к поду не ходят.
+    # Health-check Cilium — отдельный endpoint (reserved:health), эту политику не затрагивает.
+    - fromEntities:
+        - host
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"   # пропускаем всё, но через DNS-прокси: запросы видны в Hubble и работает toFQDNs

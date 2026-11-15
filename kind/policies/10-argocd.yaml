@@ -1,0 +1,146 @@
+# Разрешения для Argo CD (namespace argocd) поверх baseline default deny.
+# Включены компоненты: server, repo-server, application-controller, applicationset-controller,
+# notifications-controller, redis (+ job redis-secret-init). Dex отключён в argocd/values.yaml, правил для него нет.
+# UI через `kubectl port-forward`: kubelet подключается к сокету внутри netns пода, политика этот трафик не видит.
+---
+# Egress к kube-apiserver — только компонентам, которым он нужен.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: argocd-to-apiserver
+  namespace: argocd
+spec:
+  endpointSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values:
+          - argocd-server
+          - argocd-application-controller
+          - argocd-applicationset-controller
+          - argocd-notifications-controller
+          - argocd-redis-secret-init
+  egress:
+    - toEntities:
+        - kube-apiserver
+      toPorts:
+        - ports:
+            - port: "6443"
+              protocol: TCP
+---
+# repo-server -> Git. Репозитория пока нет: открыт world:443/22.
+# Когда появится URL, заменить на toFQDNs (пример ниже). DNS L7 из baseline позволяет это сделать.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: argocd-repo-server-to-git
+  namespace: argocd
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-repo-server
+  egress:
+    - toEntities:
+        - world
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "22"
+              protocol: TCP
+    # - toFQDNs:
+    #     - matchName: github.com
+    #   toPorts:
+    #     - ports:
+    #         - port: "443"
+    #           protocol: TCP
+    #         - port: "22"
+    #           protocol: TCP
+---
+# notifications-controller -> внешние сервисы уведомлений (Slack/Telegram/webhook) по HTTPS.
+# Каналы пока не выбраны: world:443. Потом сузить через toFQDNs (например, slack.com).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: argocd-notifications-egress
+  namespace: argocd
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-notifications-controller
+  egress:
+    - toEntities:
+        - world
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+---
+# Внутренние связи компонентов.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: argocd-internal
+  namespace: argocd
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-repo-server
+  ingress:
+    - fromEndpoints:
+        - matchExpressions:
+            - key: app.kubernetes.io/name
+              operator: In
+              values: [argocd-server, argocd-application-controller, argocd-applicationset-controller]
+      toPorts:
+        - ports:
+            - port: "8081"
+              protocol: TCP
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: argocd-redis
+  namespace: argocd
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-redis
+  ingress:
+    - fromEndpoints:
+        - matchExpressions:
+            - key: app.kubernetes.io/name
+              operator: In
+              values: [argocd-server, argocd-repo-server, argocd-application-controller]
+      toPorts:
+        - ports:
+            - port: "6379"
+              protocol: TCP
+---
+# Egress-сторона внутренних связей (default deny действует в обе стороны).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: argocd-internal-egress
+  namespace: argocd
+spec:
+  endpointSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [argocd-server, argocd-application-controller, argocd-applicationset-controller, argocd-repo-server]
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: argocd-repo-server
+      toPorts:
+        - ports:
+            - port: "8081"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: argocd-redis
+      toPorts:
+        - ports:
+            - port: "6379"
+              protocol: TCP

@@ -1,0 +1,75 @@
+# Argo CD, non-HA. Чарт argo/argo-cd (https://argoproj.github.io/argo-helm), версия — versions.env. Namespace argocd.
+global:
+  # NetworkPolicy чарта не создаём: сетевой доступ задают политики Cilium в policies/10-argocd.yaml.
+  # Два источника правил трудно держать согласованными (в Cilium allow-правила K8s NP и CNP суммируются).
+  networkPolicy:
+    create: false
+
+crds:
+  install: true
+  keep: true            # при helm uninstall CRD (и все Application) не удаляются
+
+configs:
+  params:
+    # TLS на argocd-server выключен. Доступ только через port-forward (в туннеле kubelet и так TLS),
+    # поэтому так удобнее: http://localhost:8081 без самоподписанного сертификата и без --insecure в CLI.
+    # Цена: внутри кластера трафик к argocd-server идёт по http. Для kind это допустимо.
+    server.insecure: true
+  cm:
+    admin.enabled: true
+    exec.enabled: false
+    statusbadge.enabled: false
+    timeout.reconciliation: 180s
+    # Health для Application (в Argo CD ≥1.8 отключён по умолчанию). Без него root (app-of-apps) не ждёт
+    # Healthy дочерних приложений и sync-wave между ними не работают: например, SealedSecret
+    # приедет раньше, чем sealed-secrets установит свою CRD.
+    resource.customizations.health.argoproj.io_Application: |
+      hs = {}
+      hs.status = "Progressing"
+      hs.message = ""
+      if obj.status ~= nil and obj.status.health ~= nil then
+        hs.status = obj.status.health.status
+        if obj.status.health.message ~= nil then
+          hs.message = obj.status.health.message
+        end
+      end
+      return hs
+
+dex:
+  enabled: false
+
+notifications:
+  enabled: true         # каналы и шаблоны настроим позже (argocd-notifications-cm/secret, секреты не в git)
+
+redis-ha:
+  enabled: false
+redis:
+  enabled: true
+
+controller:
+  replicas: 1
+
+server:
+  replicas: 1
+  autoscaling:
+    enabled: false
+  pdb:
+    enabled: false
+  service:
+    type: ClusterIP
+  ingress:
+    enabled: false
+  ingressGrpc:
+    enabled: false
+
+repoServer:
+  replicas: 1
+  autoscaling:
+    enabled: false
+  pdb:
+    enabled: false
+
+applicationSet:
+  replicas: 1
+  pdb:
+    enabled: false

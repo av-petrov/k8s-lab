@@ -1,0 +1,12 @@
+# Sealed Secrets controller (kube-system). Под управлением Argo CD: argocd/bootstrap/apps/05-sealed-secrets.yaml.
+# Ключ свой, а не сгенерированный контроллером: он переживает пересоздание кластера.
+#   основное хранилище — GCP Secret Manager (секрет sealed-secrets-key), резервная копия — sops (см. README).
+# Кладётся в кластер при bootstrap (make sealed-secrets-key) ДО первого старта контроллера.
+fullnameOverride: sealed-secrets-controller   # имя по умолчанию для kubeseal
+keyrenewperiod: "0"                           # не генерировать новые ключи: работаем только с нашим
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    memory: 128Mi

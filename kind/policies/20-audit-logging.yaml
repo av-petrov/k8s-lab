@@ -1,0 +1,20 @@
+# Агент доставки audit-логов (namespace audit-logging, Fluent Bit) -> GCP Cloud Logging.
+# Kubernetes-фильтр не используется: audit.log уже содержит всё нужное, поэтому egress к kube-apiserver не выдаём.
+# DNS разрешён baseline-политикой через L7-прокси, поэтому toFQDNs работает.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: audit-shipper-egress
+  namespace: audit-logging
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: fluent-bit
+  egress:
+    - toFQDNs:
+        - matchName: logging.googleapis.com   # entries:write
+        - matchName: oauth2.googleapis.com    # обмен JWT ключа SA на access token
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP

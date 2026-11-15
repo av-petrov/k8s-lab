@@ -1,0 +1,76 @@
+# litellm (namespace litellm) под baseline default deny.
+# После пересоздания кластера litellm нужно переустановить отдельно (его values тут не хранятся: в них ключи API).
+# Метки сняты со старого кластера: litellm-helm 1.108.4 + bitnami postgresql 14.3.1.
+---
+# Egress наружу: пока весь IPv4 (0.0.0.0/0), потому что список LLM-провайдеров не зафиксирован.
+# Сузить до toFQDNs (api.openai.com, api.anthropic.com, ...), когда он будет известен.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: litellm-egress-internet
+  namespace: litellm
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: litellm
+  egress:
+    - toCIDR:
+        - 0.0.0.0/0   # покрывает только внешние адреса (world), поды и ноды кластера сюда не входят
+---
+# litellm (и его migrations-job) -> postgres:5432, обе стороны.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: litellm-to-postgres
+  namespace: litellm
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/instance: litellm
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: postgresql
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: postgres-from-litellm
+  namespace: litellm
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: postgresql
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            app.kubernetes.io/instance: litellm
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
+---
+# API litellm (4000) доступен из любого пользовательского namespace. port-forward работает и без этого правила.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: litellm-ingress-api
+  namespace: litellm
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: litellm
+  ingress:
+    - fromEndpoints:
+        # В CNP пустой селектор {} означает только свой namespace, поэтому явно указываем «любой namespace».
+        - matchExpressions:
+            - key: io.kubernetes.pod.namespace
+              operator: Exists
+      toPorts:
+        - ports:
+            - port: "4000"
+              protocol: TCP

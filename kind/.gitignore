@@ -1,0 +1,7 @@
+.helm/
+.build/
+# страховка от случайного коммита открытых секретов/ключей
+*.key
+*.unsealed.yaml
+*-secret.yaml
+*.tmp
