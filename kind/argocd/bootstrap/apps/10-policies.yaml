@@ -14,6 +14,9 @@ spec:
     path: kind/policies
   destination:
     server: https://kubernetes.default.svc
+    # Пустой namespace не совпадает ни с одним destination AppProject platform -> InvalidSpecError.
+    # Это только значение по умолчанию: у всех CNP в policies/ namespace задан явно, CCNP и Namespace — кластерные.
+    namespace: argocd
   syncPolicy:
     automated:
       prune: false
