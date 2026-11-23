@@ -1,0 +1,47 @@
+# Список приложений kind-dev01. Читает ApplicationSet `apps` (argocd/bootstrap/apps/30-apps.yaml).
+# Одна запись в components = одно Application `<name>-<environment>` в AppProject `apps`.
+# Применение: правка -> commit -> push в main. Argo CD подхватит в течение ~3 минут.
+#
+# Поля (флаги — строки "true"/"false"; настоящие bool тоже принимаются):
+#   name             обязательно; имя релиза/приложения
+#   environment      обязательно; суффикс имени Application, метка environment, часть путей по умолчанию
+#   namespace        namespace назначения (по умолчанию = name). Системные запрещены AppProject `apps`
+#   autoSync         "true" — автосинк + selfHeal; "false" — синк вручную (UI / argocd app sync)
+#   prune            удалять ресурсы, пропавшие из Git (только при autoSync: "true")
+#   createNamespace  создать namespace при синке
+#
+# Тип источника:
+#   A) Helm-чарт из Helm-репозитория — задать chart:
+#        repoURL      URL Helm-репозитория (должен быть в sourceRepos AppProject `apps`!)
+#        chart        имя чарта
+#        version      версия чарта: определять `helm search repo <chart> --versions`, не по памяти
+#        valuesFile   values в этом Git (путь от kind/); по умолчанию apps/<name>/values-<environment>.yaml,
+#                     отсутствующий файл игнорируется
+#   B) каталог в этом Git — без chart:
+#        manifestsPath  путь от kind/; по умолчанию apps/<name>/overlays/<environment>
+#                       Тип Argo CD определит сам: kustomization.yaml -> Kustomize,
+#                       Chart.yaml -> Helm (чарт в Git), иначе обычные YAML-манифесты.
+#
+# ВАЖНО: в namespace приложений действует baseline default deny (policies/00-baseline-default-deny.yaml).
+# Разрешены только DNS и пробы kubelet. Нужные приложению связи описывать CiliumNetworkPolicy
+# рядом с манифестами (вариант B) или в policies/.
+key:
+  components:
+    # A) Helm из Helm-репозитория
+    - name: podinfo
+      environment: "test"
+      repoURL: https://stefanprodan.github.io/podinfo
+      chart: podinfo
+      version: "6.17.0"
+      # valuesFile: "apps/podinfo/values-test.yaml"   # это и так значение по умолчанию
+      autoSync: "true"
+      prune: "true"
+      createNamespace: "true"
+
+    # B) Kustomize из этого Git
+    - name: hello
+      environment: "test"
+      # manifestsPath: "apps/hello/overlays/test"     # это и так значение по умолчанию
+      autoSync: "false"
+      prune: "true"
+      createNamespace: "true"

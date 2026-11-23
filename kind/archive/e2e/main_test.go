@@ -17,7 +17,6 @@ limitations under the License.
 package kind
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -29,10 +28,6 @@ import (
 )
 
 var testenv env.Environment
-
-func init() {
-	fmt.Println("init from main_test.go")
-}
 
 func TestMain(m *testing.M) {
 	testenv, _ = env.NewFromFlags()
@@ -50,6 +45,8 @@ func TestMain(m *testing.M) {
 		),
 		envfuncs.CreateNamespace(namespace),
 	)
+
+	testenv.BeforeEachTest()
 
 	logsDir := filepath.Join("logs", kindClusterName)
 

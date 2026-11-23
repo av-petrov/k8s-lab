@@ -14,7 +14,9 @@
  2. cilium-install   CNI (helm)           │   ├─ sealed-secrets    wave -20  контроллер (kube-system)
  3. argocd-install   Argo CD (helm)       │   ├─ network-policies  wave -10  kind/policies/
  4. sealed-secrets-key  ключ из GCP SM    │   └─ audit-shipper     wave 0    fluent-bit + values + SealedSecret
- 5. argocd-bootstrap project + root app   │   (дальше: litellm, ...; позже Argo CD self-manage)
+ 5. argocd-bootstrap project + root app   │   └─ apps (ApplicationSet) wave 11 kind/argocd/list.yaml
+                                         │        ├─ podinfo-test   Helm из Helm-репо
+                                         │        └─ hello-test     Kustomize из Git
 ```
 
 Почему Cilium и Argo CD ставятся руками: без CNI не стартует ни один под, включая Argo CD, а Argo CD не может установить сам себя
@@ -93,13 +95,19 @@ audit/audit-policy.yaml          audit policy kube-apiserver (монтирует
 audit/shipper/values.yaml        [GitOps] Fluent Bit: audit.log -> GCP Cloud Logging (+ stdout для отладки)
 audit/shipper/secrets/           [GitOps] SealedSecret gcp-logging-sa
 argocd/values.yaml               Argo CD non-HA
-argocd/bootstrap/                AppProject, root app, apps/ (дочерние Application)
+argocd/bootstrap/                AppProject platform, root app, apps/ (дочерние Application)
+argocd/bootstrap/apps/30-apps.yaml  [GitOps] AppProject apps + ApplicationSet apps
+argocd/list.yaml                 [GitOps] список прикладных приложений (Helm / Kustomize / манифесты)
+apps/<name>/                     [GitOps] values (values-<env>.yaml) или kustomize (base/, overlays/<env>/)
 *.current-backup.*, audit/kube-apiserver.pod.before.yaml   снимки старого кластера (1.20.3)
+archive/e2e/                     временно: старый kind-конфиг и e2e-тесты на Go (не часть платформы)
 ```
 
 ## Версии
 
-- Ставится вручную — `versions.env`: kindest/node v1.35.1, Cilium 1.20.4, argo-cd 10.18.0 (Argo CD v3.6.1), helm-diff v3.12.5.
+- Ставится вручную — `versions.env`: kindest/node v1.35.1, Cilium 1.20.5, argo-cd 10.18.2 (Argo CD v3.6.2), helm-diff v3.12.5.
+  (2026-11-23 подняты с 1.20.4 / 10.18.0; в живом кластере до пересоздания — старые, `make diff` покажет разницу.)
+- Приложения — `version` в `argocd/list.yaml`: podinfo 6.17.0.
 - Под Argo CD — `targetRevision` в `argocd/bootstrap/apps/*.yaml`: sealed-secrets 2.22.0 (контроллер v0.41.2), fluent-bit 0.58.3 (Fluent Bit 5.1.3).
 - Helm-репозиторий Sealed Secrets переехал: `https://bitnami.github.io/sealed-secrets` (старый `bitnami-labs.github.io` отдаёт 404).
 - Локальный `kubeseal` v0.27.3 старше контроллера v0.41.2. Офлайн-запечатывание по `--cert` совместимо, но обновить стоит.
@@ -126,6 +134,36 @@ logName:"kube.audit" AND jsonPayload.verb="delete"
 logName:"kube.audit" AND jsonPayload.objectRef.resource="secrets" AND NOT jsonPayload.user.username:"system:"
 logName:"kube.audit" AND jsonPayload.objectRef.apiGroup="rbac.authorization.k8s.io"
 ```
+
+## Приложения (ApplicationSet + list.yaml)
+
+Прикладные приложения не требуют своих Application-файлов: достаточно записи в `argocd/list.yaml` и push в `main`.
+ApplicationSet `apps` (`argocd/bootstrap/apps/30-apps.yaml`) делает из каждой записи Application `<name>-<environment>`
+в AppProject `apps`. Схема полей — в шапке `list.yaml`. Кратко:
+
+| Тип | Что задать | Откуда манифесты |
+|---|---|---|
+| Helm из Helm-репозитория | `repoURL`, `chart`, `version` | values: `apps/<name>/values-<env>.yaml` (или `valuesFile`), нет файла — дефолты чарта |
+| Kustomize | ничего (или `manifestsPath`) | `apps/<name>/overlays/<env>/kustomization.yaml` |
+| Helm-чарт в Git | `manifestsPath` на каталог с `Chart.yaml` | Argo CD определит сам |
+| Обычные YAML | `manifestsPath` на каталог | Argo CD определит сам |
+
+Флаги `autoSync` / `prune` / `createNamespace` — строки `"true"`/`"false"`. `prune` работает только при `autoSync: "true"`.
+При `autoSync: "false"` синк — из UI или `argocd app sync <name>-<env>`.
+
+Добавить Helm-приложение:
+1. `make repos` / `helm repo add` → `helm search repo <repo>/<chart> --versions` → версию в `version` (не по памяти).
+2. URL Helm-репозитория — в `sourceRepos` AppProject `apps` (`30-apps.yaml`), иначе Application будет `InvalidSpec`.
+3. Если чарт содержит кластерные ресурсы (CRD, ClusterRole, Webhook) — AppProject `apps` их не пропустит
+   (`clusterResourceWhitelist` = только Namespace). Расширять осознанно или вести такое приложение в проекте `platform`.
+4. Связи приложения — CiliumNetworkPolicy (в namespace приложений действует default deny: разрешены только DNS и пробы kubelet).
+   Для Kustomize — рядом с манифестами, для Helm из репо — в `policies/`.
+5. commit + push → `make argocd-apps`.
+
+Ограничения AppProject `apps`: запрещены namespace `kube-*`, `argocd`, `audit-logging`, `cilium-*`, `local-path-storage`.
+Удаление записи из `list.yaml` удаляет Application, но ресурсы остаются (`preserveResourcesOnDeletion: true`): защита от того,
+что битый `list.yaml` снесёт все приложения сразу. Ресурсы потом удалить руками.
+Проверить шаблон без кластера можно через `helm template` (тот же Go template + sprig): так он проверялся при написании.
 
 ## Сетевые политики (enforce)
 
@@ -217,7 +255,7 @@ Kind-патч kubeadm: kind v0.31 генерирует конфиг в `kubeadm.
 - `cilium connectivity test` корректен только при `policyAuditMode: false`. Под audit mode ~47 тестов падают с «succeeded while it should have failed».
 - `~/.kube/config` доступен группе и всем (helm предупреждает): `chmod 600 ~/.kube/config`.
 - Сервер 1.35, kubectl 1.33 — разница больше поддерживаемой, лучше обновить kubectl.
-- `dev01.yaml` и `dev01-with-registry.sh` не изменены. Новый кластер создаётся из `cluster/`.
+- Старые `dev01.yaml`, `dev01-with-registry.sh` и e2e-тесты на Go перенесены в `archive/e2e/` (временно). Новый кластер создаётся из `cluster/`.
 
 ## helm-diff
 

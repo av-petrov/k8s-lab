@@ -1,7 +1,7 @@
 # Шаблон kind-конфига кластера dev01. Рендерится cluster/create.sh в .build/kind-dev01.yaml:
 #   __ROOT__   -> абсолютный путь к этой директории (kind требует абсолютный hostPath)
 #   __IMAGE__  -> KIND_NODE_IMAGE из versions.env
-# Отличия от ../dev01.yaml: kubeProxyMode: none (сервисы обслуживает Cilium KPR) и audit-логи apiserver.
+# Отличия от ../archive/e2e/dev01.yaml: kubeProxyMode: none (сервисы обслуживает Cilium KPR) и audit-логи apiserver.
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 name: dev01

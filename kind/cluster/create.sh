@@ -1,6 +1,6 @@
 #!/bin/sh
 # Создаёт kind-кластер dev01 (без kube-proxy, с audit) + локальный registry localhost:5001.
-# Основано на ../dev01-with-registry.sh. Запускать из корня директории kind/: make cluster-create
+# Основано на ../archive/e2e/dev01-with-registry.sh. Запускать из корня директории kind/: make cluster-create
 set -o errexit -o nounset
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

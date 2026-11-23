@@ -20,7 +20,7 @@ fi
 # https://github.com/kubernetes-sigs/kind/issues/2875
 # https://github.com/containerd/containerd/blob/main/docs/cri/config.md#registry-configuration
 # See: https://github.com/containerd/containerd/blob/main/docs/hosts.md
-# kind create cluster --name dev01 --config=./dev01.yaml
+kind create cluster --name dev01 --config=./dev01.yaml
 
 # 3. Add the registry config to the nodes
 #

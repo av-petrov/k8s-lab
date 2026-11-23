@@ -1,0 +1,16 @@
+# Окружение test. ApplicationSet `apps` берёт по умолчанию apps/<name>/overlays/<environment>.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+labels:
+  - pairs:
+      environment: test
+patches:
+  - target:
+      kind: Deployment
+      name: hello
+    patch: |
+      - op: replace
+        path: /spec/template/spec/containers/0/env/0/value
+        value: "hello from kustomize (test)"

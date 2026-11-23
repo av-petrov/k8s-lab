@@ -129,9 +129,12 @@ sealed-secrets-key: ## bootstrap: ключ из Secret Manager -> Secret в kube
 
 sealed-secrets-backup: ## резервная копия ключа из Secret Manager в sops-файл (SOPS_BACKUP_FILE, SOPS_ARGS)
 	@test -n "$(SOPS_BACKUP_FILE)" || { echo "задайте SOPS_BACKUP_FILE=..."; exit 1; }
+	@test -n "$(SOPS_ARGS)" || { echo 'задайте SOPS_ARGS="--pgp <FPR>" (stdin не совпадает с creation_rules .sops.yaml)'; exit 1; }
 	@bash -o pipefail -c 'gcloud secrets versions access latest --secret sealed-secrets-key --project "$(GCP_PROJECT)" \
-	  | sops --encrypt $(SOPS_ARGS) --encrypted-regex "^(data|stringData)$$" --input-type yaml --output-type yaml /dev/stdin > "$(SOPS_BACKUP_FILE)"'
+	  | sops --encrypt $(SOPS_ARGS) --encrypted-regex "^(data|stringData)$$" --input-type yaml --output-type yaml /dev/stdin > "$(SOPS_BACKUP_FILE).tmp" \
+	  && mv "$(SOPS_BACKUP_FILE).tmp" "$(SOPS_BACKUP_FILE)" || { rm -f "$(SOPS_BACKUP_FILE).tmp"; exit 1; }'
 	@echo "backup: $(SOPS_BACKUP_FILE)"
+	@sops --decrypt "$(SOPS_BACKUP_FILE)" | $(KUBECTL) apply --dry-run=client -f - >/dev/null && echo "проверка: бэкап расшифровывается, манифест валиден"
 
 sealed-secrets-restore: ## авария: ключ из sops-бэкапа -> кластер и обратно в Secret Manager
 	@test -n "$(SOPS_BACKUP_FILE)" || { echo "задайте SOPS_BACKUP_FILE=..."; exit 1; }

@@ -18,6 +18,7 @@ package kind
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -27,6 +28,40 @@ import (
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/features"
 )
+
+func init() {
+	fmt.Println("init from kind_with_config_test.go")
+}
+
+func TestSecondKindCluster(t *testing.T) {
+	deploymentFeature := features.New("appsv1/deployment").
+		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			// start a deployment
+			deployment := newDeployment(cfg.Namespace(), "test-deployment-second", 1)
+			if err := cfg.Client().Resources().Create(ctx, deployment); err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(2 * time.Second)
+			return ctx
+		}).
+		Assess("deployment creation", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			var dep appsv1.Deployment
+			if err := cfg.Client().Resources().Get(ctx, "test-deployment-second", cfg.Namespace(), &dep); err != nil {
+				t.Fatal(err)
+			}
+			t.Logf("deployment found: %s", dep.Name)
+			return context.WithValue(ctx, "test-deployment-second", &dep)
+		}).
+		Teardown(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			dep := ctx.Value("test-deployment-second").(*appsv1.Deployment)
+			if err := cfg.Client().Resources().Delete(ctx, dep); err != nil {
+				t.Fatal(err)
+			}
+			return ctx
+		}).Feature()
+
+	testenv.Test(t, deploymentFeature)
+}
 
 func TestKindCluster(t *testing.T) {
 	deploymentFeature := features.New("appsv1/deployment").
@@ -68,7 +103,7 @@ func newDeployment(namespace string, name string, replicaCount int32) *appsv1.De
 			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "test-app"}},
-				Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "nginx", Image: "localhost:5001/mirror/nginx:1.29.3"}}},
+				Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "nginx", Image: "nginx:1.29.3"}}},
 			},
 		},
 	}

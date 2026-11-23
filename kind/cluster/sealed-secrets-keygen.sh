@@ -39,6 +39,21 @@ data:
 YAML
 }
 
+# Бэкап — ДО загрузки в Secret Manager: ключ не должен оказаться в облаке без резервной копии.
+# Пишем во временный файл рядом с целевым и переименовываем только при успехе (без пустых файлов при ошибке).
+if [ -n "${SOPS_BACKUP_FILE:-}" ]; then
+  [ -n "${SOPS_ARGS:-}" ] || [ -n "${SOPS_CONFIG:-}" ] || {
+    echo 'нужен SOPS_ARGS (например SOPS_ARGS="--pgp <FPR>"): stdin не совпадает с creation_rules .sops.yaml' >&2; exit 1; }
+  trap 'rm -f "$SOPS_BACKUP_FILE.tmp"' EXIT
+  # shellcheck disable=SC2086
+  manifest | sops --encrypt ${SOPS_ARGS:-} --encrypted-regex '^(data|stringData)$' \
+    --input-type yaml --output-type yaml /dev/stdin > "$SOPS_BACKUP_FILE.tmp"
+  mv "$SOPS_BACKUP_FILE.tmp" "$SOPS_BACKUP_FILE"
+  echo "Резервная копия (sops): $SOPS_BACKUP_FILE"
+else
+  echo "ВНИМАНИЕ: без SOPS_BACKUP_FILE резервной копии не будет. Позже: make sealed-secrets-backup SOPS_BACKUP_FILE=... SOPS_ARGS=..." >&2
+fi
+
 if ! gcloud secrets describe "$SM_SECRET" --project "$GCP_PROJECT" >/dev/null 2>&1; then
   # version-destroy-ttl: уничтожение версии откладывается на 30 дней (защита от случайного destroy).
   gcloud secrets create "$SM_SECRET" --project "$GCP_PROJECT" --replication-policy=automatic \
@@ -46,13 +61,4 @@ if ! gcloud secrets describe "$SM_SECRET" --project "$GCP_PROJECT" >/dev/null 2>
 fi
 manifest | gcloud secrets versions add "$SM_SECRET" --project "$GCP_PROJECT" --data-file=- >/dev/null
 echo "Ключ загружен в Secret Manager: $SM_SECRET (новая версия). Сертификат: $CRT"
-
-if [ -n "${SOPS_BACKUP_FILE:-}" ]; then
-  # shellcheck disable=SC2086
-  manifest | sops --encrypt ${SOPS_ARGS:-} --encrypted-regex '^(data|stringData)$' \
-    --input-type yaml --output-type yaml /dev/stdin > "$SOPS_BACKUP_FILE"
-  echo "Резервная копия (sops): $SOPS_BACKUP_FILE"
-else
-  echo "Резервная копия не сделана. Позже: make sealed-secrets-backup SOPS_BACKUP_FILE=... SOPS_ARGS=..."
-fi
 unset KEY

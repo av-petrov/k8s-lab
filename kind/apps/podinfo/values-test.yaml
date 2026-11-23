@@ -1,0 +1,11 @@
+# podinfo (Helm, чарт из https://stefanprodan.github.io/podinfo), окружение test.
+# Подключается ApplicationSet `apps` по умолчанию: apps/<name>/values-<environment>.yaml
+replicaCount: 1
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    memory: 64Mi
+service:
+  type: ClusterIP

@@ -1,0 +1,113 @@
+# Прикладные приложения: AppProject `apps` + ApplicationSet `apps`, который читает kind/argocd/list.yaml.
+# Платформа (sealed-secrets, policies, audit-shipper) остаётся в app-of-apps и проекте `platform`.
+#
+# Генератор: matrix(git files -> list.elementsYaml). Git-генератор отдаёт содержимое list.yaml как .key,
+# list разворачивает .key.components в отдельные наборы параметров.
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: apps
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"   # после политик (-10) и audit-shipper (0)
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: Application workloads of kind-dev01 (kind/argocd/list.yaml)
+  # Новый Helm-репозиторий в list.yaml -> сначала добавить сюда, иначе Application будет InvalidSpec.
+  sourceRepos:
+    - https://github.com/av-petrov/k8s-lab.git
+    - https://stefanprodan.github.io/podinfo
+  # Любой namespace, кроме системных и платформенных (правила с ! — запрет, проверяются раньше разрешений).
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: "!kube-*"
+    - server: https://kubernetes.default.svc
+      namespace: "!argocd"
+    - server: https://kubernetes.default.svc
+      namespace: "!audit-logging"
+    - server: https://kubernetes.default.svc
+      namespace: "!cilium-*"
+    - server: https://kubernetes.default.svc
+      namespace: "!local-path-storage"
+    - server: https://kubernetes.default.svc
+      namespace: "*"
+  # Кластерные ресурсы — только Namespace (CreateNamespace=true). Чарт с CRD/ClusterRole потребует
+  # явного расширения whitelist — это осознанное решение, а не побочный эффект добавления в list.yaml.
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  namespaceResourceBlacklist:
+    - group: ""
+      kind: ResourceQuota
+    - group: ""
+      kind: LimitRange
+  orphanedResources:
+    warn: true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: apps
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "11"
+spec:
+  goTemplate: true
+  generators:
+    - matrix:
+        generators:
+          - git:
+              repoURL: https://github.com/av-petrov/k8s-lab.git
+              revision: main
+              files:
+                - path: kind/argocd/list.yaml
+          - list:
+              elementsYaml: "{{ .key.components | toJson }}"
+  syncPolicy:
+    # Удаление записи из list.yaml удаляет Application, но НЕ ресурсы в кластере (их потом убрать руками).
+    # Защита от случайной правки/поломки list.yaml, которая снесла бы все приложения разом.
+    preserveResourcesOnDeletion: true
+  template:
+    metadata:
+      name: '{{ .name }}{{ with .environment }}-{{ . }}{{ end }}'
+      namespace: argocd
+      labels:
+        app.kubernetes.io/part-of: apps
+        environment: '{{ default "none" .environment }}'
+    spec:
+      project: apps
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{ default .name .namespace }}'
+  # Источник и syncPolicy зависят от полей записи, поэтому собираются в templatePatch (Go template -> YAML).
+  templatePatch: |
+    spec:
+    {{- if .chart }}
+      sources:
+        - repoURL: {{ .repoURL | quote }}
+          chart: {{ .chart | quote }}
+          targetRevision: {{ toString .version | quote }}
+          helm:
+            releaseName: {{ .name | quote }}
+            ignoreMissingValueFiles: true
+            valueFiles:
+              - {{ printf "$values/kind/%s" (default (printf "apps/%s/values-%s.yaml" .name (default "default" .environment)) .valuesFile) | quote }}
+        - repoURL: https://github.com/av-petrov/k8s-lab.git
+          targetRevision: main
+          ref: values
+    {{- else }}
+      sources:
+        - repoURL: https://github.com/av-petrov/k8s-lab.git
+          targetRevision: main
+          path: {{ printf "kind/%s" (default (printf "apps/%s/overlays/%s" .name (default "default" .environment)) .manifestsPath) | quote }}
+    {{- end }}
+      syncPolicy:
+      {{- if eq (toString (default "false" .autoSync)) "true" }}
+        automated:
+          prune: {{ eq (toString (default "false" .prune)) "true" }}
+          selfHeal: true
+      {{- end }}
+        syncOptions:
+          - CreateNamespace={{ eq (toString (default "false" .createNamespace)) "true" }}
