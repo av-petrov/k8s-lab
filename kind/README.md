@@ -125,8 +125,27 @@ archive/e2e/                     временно: старый kind-конфи�
 | Отладка агента | `make audit-shipper-metrics`, `make audit-shipper-logs` | |
 
 Все сервисы — ClusterIP, без Ingress, NodePort и LoadBalancer.
-После первого входа в Argo CD смените пароль (`argocd account update-password`) и удалите секрет:
-`kubectl --context kind-dev01 -n argocd delete secret argocd-initial-admin-secret`.
+### Пароль admin Argo CD
+
+| Secret (`argocd`) | Что внутри |
+|---|---|
+| `argocd-initial-admin-secret` | начальный пароль **открытым текстом** (base64). После смены пароля недействителен — удалить |
+| `argocd-secret` | `admin.password` — **bcrypt-хэш** текущего пароля, `admin.passwordMtime`. Пишет argocd-server |
+
+После первого входа смените пароль и удалите начальный секрет:
+```bash
+make argocd-ui                                             # отдельное окно: port-forward localhost:8081
+argocd login localhost:8081 --username admin --plaintext   # --plaintext: server.insecure=true
+argocd account update-password
+kubectl --context kind-dev01 -n argocd delete secret argocd-initial-admin-secret
+```
+
+- Хэш живёт только в кластере: после пересоздания снова случайный пароль в `argocd-initial-admin-secret`.
+  Постоянный пароль — bcrypt-хэш в `configs.secret.argocdServerAdminPassword` (не в Git открыто: через Secret Manager,
+  как ключ Sealed Secrets) или SSO (dex) с отключённым локальным admin.
+- `make argocd-upgrade` пароль не затирает: `admin.password` добавлен сервером, а не чартом, Helm (three-way merge) его сохраняет.
+- Забыли пароль: удалить `admin.password` и `admin.passwordMtime` из `argocd-secret`, затем
+  `kubectl --context kind-dev01 -n argocd rollout restart deploy/argocd-server` — сервер создаст новый `argocd-initial-admin-secret`.
 
 Примеры запросов в Logs Explorer:
 ```
@@ -240,6 +259,9 @@ Kind-патч kubeadm: kind v0.31 генерирует конфиг в `kubeadm.
 2. litellm как Application: чарт, values без секретов в Git, ключи — в Secret, сделанном руками (или External Secrets).
 3. Argo CD self-management: Application на чарт argo-cd с `argocd/values.yaml`, без prune. Ошибка в values может сломать Argo CD,
    тогда чинить через `make argocd-upgrade` руками. После этого `make argocd-upgrade` использовать только для bootstrap.
+   `argocd-secret` меняет и сам сервер (`admin.password`, `server.secretkey`): до включения selfHeal добавить
+   `ignoreDifferences` на его `/data` или `configs.secret.createSecret: false` (Secret создаётся вне чарта), иначе
+   Argo CD и argocd-server будут перезаписывать друг друга.
 4. Cilium под Argo CD — последним и осторожно (CD-система, которая сама зависит от CNI):
    - `prune: false` и без `selfHeal` на старте, ручной sync;
    - TLS-секреты Hubble и `cilium-ca` перегенерируются при каждом рендере (`hubble.tls.auto.method: helm`): либо `ignoreDifferences`, либо `cronJob`/cert-manager;
