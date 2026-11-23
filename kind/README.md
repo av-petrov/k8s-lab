@@ -85,6 +85,7 @@ SealedSecret по умолчанию привязан к имени и namespace
 cluster/kind-dev01.yaml.tmpl     kind-конфиг: kubeProxyMode: none + audit apiserver (рендерится в .build/)
 cluster/create.sh                создание кластера + локальный registry localhost:5001
 cluster/gcp-setup.sh, sealed-secrets-keygen.sh, seal-gcp-logging.sh   однократная подготовка GCP и ключей
+cluster/gcp-budget.sh, gcp/monitoring/   бюджет GCP и алерты на объём логов (make gcp-budget)
 cluster/argocd-repo-creds.sh     только для приватного репо: Secret с GitHub-токеном
 sealed-secrets/                  [GitOps] values контроллера + публичный сертификат
 config.env.example               шаблон .local/config.env (GCP_PROJECT)
@@ -238,6 +239,32 @@ Kind-патч kubeadm: kind v0.31 генерирует конфиг в `kubeadm.
 Рекомендуется budget alert в проекте (например, $1). Долгий архив при необходимости делается log sink'ом в GCS (класс Archive), агент менять не нужно.
 Ротация ключа SA — см. раздел «Секреты». Отказ от эксперимента: удалить SA `kind-dev01-audit` и секрет `sealed-secrets-key`.
 Пока SealedSecret `gcp-logging-sa` не создан, под Fluent Bit висит в `ContainerCreating`, и это ожидаемо.
+
+## Бюджет GCP (бесплатный лимит логов)
+
+Cloud Logging: **50 GiB на проект в месяц бесплатно**, сверх — $0.50/GiB (включает 30 дней хранения); хранение дольше
+30 дней — $0.01/GiB/мес; запросы бесплатны. Источник: https://cloud.google.com/products/observability/pricing
+Замер 2026-11-23: в обычном режиме ~0.6 GiB/мес (~1% лимита), пересоздание кластера (bootstrap) — ~10 MB.
+Основной объём — Argo CD (`update applicationsets`, `patch applications`) и ручной `kubectl`.
+
+Жёсткого лимита на приём логов в GCP нет, бюджет только оповещает. Поэтому слои:
+
+| Слой | Что | Как |
+|---|---|---|
+| Алерт по объёму | `logging.googleapis.com/billing/monthly_bytes_ingested` > 25 GiB (WARNING) и > 40 GiB (CRITICAL) | `make gcp-budget`, `gcp/monitoring/*.json` |
+| Бюджет | сумма `BUDGET_AMOUNT` (по умолчанию 1 в валюте billing-аккаунта), пороги 50% / 100% / прогноз 100% | `make gcp-budget` |
+| Аварийный выключатель | исключение `drop-kube-audit` на sink `_Default`: логи не принимаются и не тарифицируются (теряются; stdout агента остаётся) | `make gcp-logging-off` / `make gcp-logging-on` |
+
+Алерт по объёму срабатывает раньше бюджета: пока объём в бесплатном лимите, бюджет видит $0.
+Настройка (один раз, в своём терминале, нужны права на billing-аккаунт):
+```bash
+# в .local/config.env (не в Git), пример — config.env.example:
+#   BILLING_ACCOUNT=$(gcloud billing projects describe $GCP_PROJECT --format='value(billingAccountName)')
+#   ALERT_EMAIL=...        (пусто — алерты только в консоли, письма бюджета — админам billing)
+make gcp-budget
+```
+Скрипт идемпотентен: существующие канал, политики и бюджет не меняет. Изменить — удалить в консоли и запустить снова.
+Если объём растёт: сначала `audit/audit-policy.yaml` (шумные пользователи/ресурсы → `None`), затем фильтр `throttle` в Fluent Bit.
 
 ## Upgrade
 

@@ -1,0 +1,37 @@
+{
+  "displayName": "kind-dev01: Cloud Logging ingest > 25 GiB/month",
+  "documentation": {
+    "content": "Ingested logs this month exceeded 25 GiB (half of the 50 GiB free tier). Check volume: `make audit-shipper-metrics`. Emergency stop: `make gcp-logging-off`.",
+    "mimeType": "text/markdown"
+  },
+  "combiner": "OR",
+  "conditions": [
+    {
+      "displayName": "monthly_bytes_ingested > 25 GiB",
+      "conditionThreshold": {
+        "filter": "metric.type=\"logging.googleapis.com/billing/monthly_bytes_ingested\" AND resource.type=\"global\"",
+        "aggregations": [
+          {
+            "alignmentPeriod": "3600s",
+            "perSeriesAligner": "ALIGN_MAX",
+            "crossSeriesReducer": "REDUCE_SUM"
+          }
+        ],
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 26843545600,
+        "duration": "0s",
+        "trigger": {
+          "count": 1
+        }
+      }
+    }
+  ],
+  "alertStrategy": {
+    "autoClose": "604800s"
+  },
+  "severity": "WARNING",
+  "userLabels": {
+    "cluster": "kind-dev01",
+    "purpose": "logging-budget"
+  }
+}

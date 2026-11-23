@@ -2,7 +2,7 @@
 include versions.env
 # Личные настройки (GCP_PROJECT=...), не в Git: .local/ игнорируется. Пример — config.env.example.
 -include .local/config.env
-export GCP_PROJECT
+export GCP_PROJECT BILLING_ACCOUNT ALERT_EMAIL BUDGET_AMOUNT
 
 CTX            := kind-dev01
 KUBECTL        := kubectl --context $(CTX)
@@ -30,7 +30,7 @@ endef
         cilium-install cilium-upgrade cilium-diff cilium-status cilium-kpr cilium-connectivity \
         hubble-ui hubble-audit hubble-dropped \
         policies-diff policies-validate break-glass-policies \
-        gcp-setup sealed-secrets-keygen sealed-secrets-key sealed-secrets-backup sealed-secrets-restore seal-gcp-logging seal audit-shipper-logs audit-shipper-metrics \
+        gcp-setup gcp-budget gcp-logging-off gcp-logging-on sealed-secrets-keygen sealed-secrets-key sealed-secrets-backup sealed-secrets-restore seal-gcp-logging seal audit-shipper-logs audit-shipper-metrics \
         argocd-install argocd-upgrade argocd-diff argocd-ui argocd-password \
         argocd-repo-creds argocd-bootstrap argocd-apps bootstrap diff
 
@@ -120,6 +120,19 @@ argocd-password: ## показать начальный пароль admin (то
 # --- секреты (Sealed Secrets, свой ключ) — запускать в СВОЁМ терминале ---------
 gcp-setup: ## однократно: API Logging/Secret Manager + SA kind-dev01-audit (нужен GCP_PROJECT)
 	./cluster/gcp-setup.sh
+
+gcp-budget: ## однократно: бюджет + алерты на объём логов (>25/>40 GiB из 50 бесплатных); нужен BILLING_ACCOUNT
+	./cluster/gcp-budget.sh
+
+# Исключение на sink _Default: логи kube.audit не принимаются и НЕ тарифицируются (но и теряются; stdout агента остаётся).
+gcp-logging-off: ## АВАРИЯ (бюджет): перестать принимать kube.audit в Cloud Logging
+	@test -n "$(GCP_PROJECT)" || { echo "задайте GCP_PROJECT"; exit 1; }
+	gcloud logging sinks update _Default --project "$(GCP_PROJECT)" \
+	  --add-exclusion='name=drop-kube-audit,filter=logName="projects/$(GCP_PROJECT)/logs/kube.audit"'
+
+gcp-logging-on: ## снова принимать kube.audit (снять исключение)
+	@test -n "$(GCP_PROJECT)" || { echo "задайте GCP_PROJECT"; exit 1; }
+	gcloud logging sinks update _Default --project "$(GCP_PROJECT)" --remove-exclusions=drop-kube-audit
 
 sealed-secrets-keygen: ## однократно/ротация: пара ключей -> Secret Manager (+ sops-бэкап, если SOPS_BACKUP_FILE)
 	./cluster/sealed-secrets-keygen.sh
