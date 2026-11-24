@@ -8,13 +8,14 @@ metadata:
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
-  description: Platform components of kind-dev01 (sealed-secrets, policies, audit shipper, argocd, cilium)
+  description: Platform components of kind-dev01 (sealed-secrets, policies, audit shipper, prometheus, argocd, cilium)
   sourceRepos:
     - https://github.com/av-petrov/k8s-lab.git
     - https://argoproj.github.io/argo-helm
     - https://helm.cilium.io
     - https://fluent.github.io/helm-charts
     - https://bitnami.github.io/sealed-secrets
+    - https://prometheus-community.github.io/helm-charts
   destinations:
     - server: https://kubernetes.default.svc
       namespace: argocd
@@ -22,6 +23,8 @@ spec:
       namespace: audit-logging
     - server: https://kubernetes.default.svc
       namespace: litellm          # только CNP из policies/
+    - server: https://kubernetes.default.svc
+      namespace: monitoring       # Prometheus (argocd/bootstrap/apps/40-prometheus.yaml)
     - server: https://kubernetes.default.svc
       namespace: kube-system      # Cilium, на последнем этапе
   clusterResourceWhitelist:

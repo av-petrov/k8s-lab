@@ -31,7 +31,7 @@ endef
         hubble-ui hubble-audit hubble-dropped \
         policies-diff policies-validate break-glass-policies \
         gcp-setup gcp-budget gcp-logging-off gcp-logging-on sealed-secrets-keygen sealed-secrets-key sealed-secrets-backup sealed-secrets-restore seal-gcp-logging seal audit-shipper-logs audit-shipper-metrics \
-        argocd-install argocd-upgrade argocd-diff argocd-ui argocd-password \
+        argocd-install argocd-upgrade argocd-diff argocd-ui argocd-password argocd-observer-token prometheus-ui \
         argocd-repo-creds argocd-bootstrap argocd-apps bootstrap diff
 
 help: ## список целей
@@ -116,6 +116,17 @@ argocd-ui: ## Argo CD UI -> http://localhost:8081 (8080 на хосте заня
 
 argocd-password: ## показать начальный пароль admin (только в терминал)
 	@$(KUBECTL) -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d; echo
+
+# Аккаунт sre-observer (role:readonly) задан в argocd/values.yaml. Нужен вход admin в CLI:
+#   make argocd-ui (отдельное окно)  ->  argocd login localhost:8081 --username admin --plaintext
+argocd-observer-token: ## API-токен read-only аккаунта sre-observer (агент argocd-observability), только в терминал
+	@argocd account get --account sre-observer --server localhost:8081 --plaintext >/dev/null \
+	  || { echo ">> нет аккаунта/сессии: make argocd-upgrade, make argocd-ui, argocd login localhost:8081 --username admin --plaintext"; exit 1; }
+	@argocd account generate-token --account sre-observer --id argocd-observability-$$(date +%Y%m%d) --expires-in 720h \
+	  --server localhost:8081 --plaintext
+
+prometheus-ui: ## Prometheus UI/API -> http://localhost:9090 (PROMETHEUS_URL для агента)
+	$(KUBECTL) -n monitoring port-forward svc/prometheus-server 9090:80
 
 # --- секреты (Sealed Secrets, свой ключ) — запускать в СВОЁМ терминале ---------
 gcp-setup: ## однократно: API Logging/Secret Manager + SA kind-dev01-audit (нужен GCP_PROJECT)

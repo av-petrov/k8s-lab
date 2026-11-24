@@ -144,3 +144,34 @@ spec:
         - ports:
             - port: "6379"
               protocol: TCP
+---
+# Prometheus (namespace monitoring) собирает /metrics компонентов Argo CD. Только порты метрик.
+# Парная egress-политика — prometheus-egress в 40-monitoring.yaml.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: argocd-metrics-from-prometheus
+  namespace: argocd
+spec:
+  endpointSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values:
+          - argocd-application-controller
+          - argocd-server
+          - argocd-repo-server
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: monitoring
+            app.kubernetes.io/name: prometheus
+            app.kubernetes.io/component: server
+      toPorts:
+        - ports:
+            - port: "8082"
+              protocol: TCP
+            - port: "8083"
+              protocol: TCP
+            - port: "8084"
+              protocol: TCP

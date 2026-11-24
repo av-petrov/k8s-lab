@@ -91,7 +91,8 @@ sealed-secrets/                  [GitOps] values контроллера + пуб
 config.env.example               шаблон .local/config.env (GCP_PROJECT)
 versions.env                     версии того, что ставится руками (kind node, Cilium, Argo CD, helm-diff)
 cilium/values.yaml, NOTES.md     Cilium (KPR, Hubble, enforce) и заметки о datapath в kind
-policies/                        [GitOps] namespaces + CCNP default deny + CNP argocd / audit-logging / litellm
+policies/                        [GitOps] namespaces + CCNP default deny + CNP argocd / audit-logging / litellm / monitoring
+monitoring/prometheus/values.yaml   [GitOps] Prometheus (только server, хранение 24h/1GB): Argo CD + cAdvisor
 audit/audit-policy.yaml          audit policy kube-apiserver (монтируется kind'ом)
 audit/shipper/values.yaml        [GitOps] Fluent Bit: audit.log -> GCP Cloud Logging (+ stdout для отладки)
 audit/shipper/secrets/           [GitOps] SealedSecret gcp-logging-sa
@@ -109,7 +110,8 @@ archive/e2e/                     временно: старый kind-конфи�
 - Ставится вручную — `versions.env`: kindest/node v1.35.1, Cilium 1.20.5, argo-cd 10.18.2 (Argo CD v3.6.2), helm-diff v3.12.5.
   (2026-11-23 подняты с 1.20.4 / 10.18.0; в живом кластере до пересоздания — старые, `make diff` покажет разницу.)
 - Приложения — `version` в `argocd/list.yaml`: podinfo 6.17.0.
-- Под Argo CD — `targetRevision` в `argocd/bootstrap/apps/*.yaml`: sealed-secrets 2.22.0 (контроллер v0.41.2), fluent-bit 0.58.3 (Fluent Bit 5.1.3).
+- Под Argo CD — `targetRevision` в `argocd/bootstrap/apps/*.yaml`: sealed-secrets 2.22.0 (контроллер v0.41.2), fluent-bit 0.58.3 (Fluent Bit 5.1.3),
+  prometheus 30.0.0 (Prometheus v3.16.0; определено `helm show chart` 2026-11-24).
 - Helm-репозиторий Sealed Secrets переехал: `https://bitnami.github.io/sealed-secrets` (старый `bitnami-labs.github.io` отдаёт 404).
 - Локальный `kubeseal` v0.27.3 старше контроллера v0.41.2. Офлайн-запечатывание по `--cert` совместимо, но обновить стоит.
 
@@ -124,8 +126,24 @@ archive/e2e/                     временно: старый kind-конфи�
 | Пароль admin Argo CD | `make argocd-password` | выводится только в терминал |
 | Audit-логи | GCP Console → Logging → Logs Explorer | `logName="projects/<project>/logs/kube.audit"` |
 | Отладка агента | `make audit-shipper-metrics`, `make audit-shipper-logs` | |
+| Prometheus | `make prometheus-ui` | http://localhost:9090 |
+| Токен read-only Argo CD | `make argocd-observer-token` | выводится только в терминал |
 
 Все сервисы — ClusterIP, без Ingress, NodePort и LoadBalancer.
+
+### Read-only аккаунт Argo CD и Prometheus (для агента argocd-observability)
+
+- Аккаунт `sre-observer` (`apiKey`, без входа в UI) и привязка к `role:readonly` — в `argocd/values.yaml`
+  (`configs.cm.accounts.*`, `configs.rbac.policy.csv`). Argo CD ставится helm'ом, поэтому применяется так же:
+  `make argocd-diff` → `make argocd-upgrade`. Проверка: `argocd account can-i sync applications '*'` под токеном → `no`.
+- Токен: `make argocd-ui` (окно), `argocd login localhost:8081 --username admin --plaintext`, `make argocd-observer-token`.
+  Токен — секрет, в Git не кладётся (в `.env` агента). Сервер хранит его id в `argocd-secret`, `make argocd-upgrade` его не затирает.
+  Отозвать: `argocd account delete-token --account sre-observer <id>`.
+- Prometheus — Application `prometheus` (`argocd/bootstrap/apps/40-prometheus.yaml`, проект `platform`, namespace `monitoring`):
+  только server, scrape 30s, хранение 24h и не более 1 GB (PVC 2Gi), цели — Argo CD (8082/8083/8084) и cAdvisor kubelet
+  (CPU/память контейнеров). Сеть: `policies/40-monitoring.yaml` + `argocd-metrics-from-prometheus` в `policies/10-argocd.yaml`.
+- AppProject `platform` (`argocd/bootstrap/project.yaml`) не под Argo CD: после правки (репозиторий prometheus-community,
+  destination `monitoring`) применить `make argocd-bootstrap`, иначе Application `prometheus` будет InvalidSpecError.
 ### Пароль admin Argo CD
 
 | Secret (`argocd`) | Что внутри |

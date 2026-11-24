@@ -34,6 +34,19 @@ configs:
         end
       end
       return hs
+    # Read-only аккаунт для агента argocd-observability (CrewAI SRE). Только API-токены, без входа в UI.
+    # Токен: make argocd-observer-token. Сервер хранит его в argocd-secret (accounts.sre-observer.tokens),
+    # make argocd-upgrade его не затирает (как admin.password: ключ добавлен сервером, а не чартом).
+    accounts.sre-observer: apiKey
+    accounts.sre-observer.enabled: "true"
+  rbac:
+    # policy.default пустой: у аккаунтов без явной роли нет прав.
+    policy.default: ""
+    policy.csv: |
+      # read-only наблюдатель: встроенная role:readonly (get на всё, без sync/update/delete/action/exec)
+      g, sre-observer, role:readonly
+      # логи подов приложений — явно (с v3 RBAC на logs проверяется всегда); дублирует role:readonly, страховка
+      p, sre-observer, logs, get, */*, allow
 
 dex:
   enabled: false

@@ -1,0 +1,31 @@
+# Prometheus для диагностики (агент argocd-observability, PROMETHEUS_URL через port-forward).
+# Multi-source: чарт из Helm-репо + values из нашего Git. Namespace monitoring и сетевые политики — в policies/.
+# Версию чарта определять `helm search repo prometheus-community/prometheus --versions`, не по памяти.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: prometheus
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"    # после политик (-10): namespace и CNP уже есть
+spec:
+  project: platform
+  sources:
+    - repoURL: https://prometheus-community.github.io/helm-charts
+      chart: prometheus
+      targetRevision: 30.0.0          # Prometheus v3.16.0
+      helm:
+        releaseName: prometheus
+        valueFiles:
+          - $values/kind/monitoring/prometheus/values.yaml
+    - repoURL: https://github.com/av-petrov/k8s-lab.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    # CreateNamespace не нужен: namespace monitoring создаёт network-policies (policies/01-namespaces.yaml)
