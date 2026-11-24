@@ -132,12 +132,20 @@ archive/e2e/                     временно: старый kind-конфи�
 
 Все сервисы — ClusterIP, без Ingress, NodePort и LoadBalancer.
 
+Порты переопределяются: `make argocd-ui ARGOCD_UI_PORT=18081` (`PROMETHEUS_UI_PORT`, `HUBBLE_UI_PORT`).
+Цели `*-ui` перезапускают port-forward сами: kubectl рвёт весь туннель, когда под сбрасывает одно соединение.
+У Argo CD (`server.insecure=true`, только http) так происходит от любого TLS-запроса: браузер на
+`https://localhost:8081` или `argocd login` без `--skip-test-tls` (CLI сначала шлёт TLS-пробу). Поэтому: в браузере
+только `http://`, в CLI всегда `--plaintext --skip-test-tls`.
+
 ### Read-only аккаунт Argo CD и Prometheus (для агента argocd-observability)
 
 - Аккаунт `sre-observer` (`apiKey`, без входа в UI) и привязка к `role:readonly` — в `argocd/values.yaml`
   (`configs.cm.accounts.*`, `configs.rbac.policy.csv`). Argo CD ставится helm'ом, поэтому применяется так же:
-  `make argocd-diff` → `make argocd-upgrade`. Проверка: `argocd account can-i sync applications '*'` под токеном → `no`.
-- Токен: `make argocd-ui` (окно), `argocd login localhost:8081 --username admin --plaintext`, `make argocd-observer-token`.
+  `make argocd-diff` → `make argocd-upgrade`. Проверка под токеном (объект приложения — `проект/имя`, поэтому `'*/*'`):
+  `argocd account can-i get applications '*/*'` → `yes`, `... sync applications '*/*'` → `no`.
+- Токен: `make argocd-ui` (окно), `argocd login localhost:8081 --username admin --plaintext --skip-test-tls`,
+  `make argocd-observer-token`.
   Токен — секрет, в Git не кладётся (в `.env` агента). Сервер хранит его id в `argocd-secret`, `make argocd-upgrade` его не затирает.
   Отозвать: `argocd account delete-token --account sre-observer <id>`.
 - Prometheus — Application `prometheus` (`argocd/bootstrap/apps/40-prometheus.yaml`, проект `platform`, namespace `monitoring`):
@@ -149,6 +157,7 @@ archive/e2e/                     временно: старый kind-конфи�
 - AppProject `platform` (`argocd/bootstrap/project.yaml`) не под Argo CD: после правки (репозитории prometheus-community
   и metrics-server, destination `monitoring`, кластерный kind `APIService`) применить `make argocd-bootstrap`,
   иначе новые Application будут InvalidSpecError / ComparisonError.
+
 ### Пароль admin Argo CD
 
 | Secret (`argocd`) | Что внутри |
@@ -159,7 +168,7 @@ archive/e2e/                     временно: старый kind-конфи�
 После первого входа смените пароль и удалите начальный секрет:
 ```bash
 make argocd-ui                                             # отдельное окно: port-forward localhost:8081
-argocd login localhost:8081 --username admin --plaintext   # --plaintext: server.insecure=true
+argocd login localhost:8081 --username admin --plaintext --skip-test-tls   # server.insecure=true; без TLS-пробы
 argocd account update-password
 kubectl --context kind-dev01 -n argocd delete secret argocd-initial-admin-secret
 ```

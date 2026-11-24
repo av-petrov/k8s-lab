@@ -12,6 +12,24 @@ export HELM_CACHE_HOME  := $(CURDIR)/.helm/cache
 export HELM_CONFIG_HOME := $(CURDIR)/.helm/config
 export HELM_DATA_HOME   := $(CURDIR)/.helm/data
 
+# Локальные порты UI (переопределяются: make argocd-ui ARGOCD_UI_PORT=18081).
+ARGOCD_UI_PORT     ?= 8081
+PROMETHEUS_UI_PORT ?= 9090
+HUBBLE_UI_PORT     ?= 12000
+
+# $(call port_forward,namespace,svc,local-port,svc-port,title)
+# port-forward с автоперезапуском. kubectl рвёт ВЕСЬ туннель, если под сбросил одно соединение
+# (типичный случай: TLS-запрос к http-серверу — браузер на https://localhost:<port> или
+# `argocd login` без --skip-test-tls), и следующий запрос получает connection refused. Цикл поднимает
+# туннель заново через 1 с. Выход — Ctrl-C.
+define port_forward
+	@trap 'echo; exit 0' INT TERM; while true; do \
+	  echo ">> $(5): http://localhost:$(3)  (Ctrl-C — выход)"; \
+	  $(KUBECTL) -n $(1) port-forward svc/$(2) $(3):$(4) || true; \
+	  echo ">> port-forward оборвался, перезапуск через 1 с"; sleep 1; \
+	done
+endef
+
 # helm diff, если плагин установлен; иначе helm template | kubectl diff (server-side).
 HAS_HELM_DIFF := $(shell HELM_DATA_HOME=$(CURDIR)/.helm/data HELM_CONFIG_HOME=$(CURDIR)/.helm/config helm plugin list 2>/dev/null | grep -q '^diff' && echo yes)
 
@@ -71,8 +89,8 @@ cilium-connectivity: ## cilium connectivity test (корректен тольк�
 	$(CILIUM) connectivity test --test-namespace cilium-test ; rc=$$?; \
 	  $(KUBECTL) delete ns cilium-test-1 cilium-test-ccnp1 cilium-test-ccnp2 --ignore-not-found --wait=false; exit $$rc
 
-hubble-ui: ## Hubble UI -> http://localhost:12000
-	$(KUBECTL) -n kube-system port-forward svc/hubble-ui 12000:80
+hubble-ui: ## Hubble UI -> http://localhost:12000 (HUBBLE_UI_PORT), с автоперезапуском
+	$(call port_forward,kube-system,hubble-ui,$(HUBBLE_UI_PORT),80,Hubble UI)
 
 hubble-audit: ## потоки, которые в enforce были бы дропнуты
 	$(KUBECTL) -n kube-system exec ds/cilium -c cilium-agent -- hubble observe --verdict AUDIT --last 200
@@ -111,22 +129,23 @@ argocd-upgrade: argocd-install ## обновить Argo CD
 argocd-diff: ## diff Argo CD
 	$(call helm_diff,argocd,argocd,argo/argo-cd,$(ARGOCD_CHART_VERSION),argocd/values.yaml)
 
-argocd-ui: ## Argo CD UI -> http://localhost:8081 (8080 на хосте занят kind)
-	$(KUBECTL) -n argocd port-forward svc/argocd-server 8081:80
+argocd-ui: ## Argo CD UI -> http://localhost:8081 (ARGOCD_UI_PORT; 8080 на хосте занят kind), только http://
+	$(call port_forward,argocd,argocd-server,$(ARGOCD_UI_PORT),80,Argo CD (только http://; CLI: --plaintext --skip-test-tls))
 
 argocd-password: ## показать начальный пароль admin (только в терминал)
 	@$(KUBECTL) -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d; echo
 
 # Аккаунт sre-observer (role:readonly) задан в argocd/values.yaml. Нужен вход admin в CLI:
-#   make argocd-ui (отдельное окно)  ->  argocd login localhost:8081 --username admin --plaintext
+#   make argocd-ui (отдельное окно)  ->  argocd login localhost:8081 --username admin --plaintext --skip-test-tls
+# --skip-test-tls обязателен: иначе CLI сначала шлёт TLS-пробу, http-сервер её сбрасывает и port-forward падает.
 argocd-observer-token: ## API-токен read-only аккаунта sre-observer (агент argocd-observability), только в терминал
-	@argocd account get --account sre-observer --server localhost:8081 --plaintext >/dev/null \
-	  || { echo ">> нет аккаунта/сессии: make argocd-upgrade, make argocd-ui, argocd login localhost:8081 --username admin --plaintext"; exit 1; }
+	@argocd account get --account sre-observer --server localhost:$(ARGOCD_UI_PORT) --plaintext >/dev/null \
+	  || { echo ">> нет аккаунта/сессии: make argocd-upgrade, make argocd-ui, argocd login localhost:$(ARGOCD_UI_PORT) --username admin --plaintext --skip-test-tls"; exit 1; }
 	@argocd account generate-token --account sre-observer --id argocd-observability-$$(date +%Y%m%d) --expires-in 720h \
-	  --server localhost:8081 --plaintext
+	  --server localhost:$(ARGOCD_UI_PORT) --plaintext
 
-prometheus-ui: ## Prometheus UI/API -> http://localhost:9090 (PROMETHEUS_URL для агента)
-	$(KUBECTL) -n monitoring port-forward svc/prometheus-server 9090:80
+prometheus-ui: ## Prometheus UI/API -> http://localhost:9090 (PROMETHEUS_UI_PORT; PROMETHEUS_URL агента), с автоперезапуском
+	$(call port_forward,monitoring,prometheus-server,$(PROMETHEUS_UI_PORT),80,Prometheus)
 
 # --- секреты (Sealed Secrets, свой ключ) — запускать в СВОЁМ терминале ---------
 gcp-setup: ## однократно: API Logging/Secret Manager + SA kind-dev01-audit (нужен GCP_PROJECT)
