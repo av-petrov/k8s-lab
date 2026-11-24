@@ -1,0 +1,16 @@
+# metrics-server (чарт kubernetes-sigs/metrics-server, версия — targetRevision в argocd/bootstrap/apps/41-metrics-server.yaml).
+# Даёт Metrics API (metrics.k8s.io): kubectl top, HPA, pod usage для агента argocd-observability.
+# Хранит только последний срез в памяти, истории нет (история — Prometheus, monitoring/prometheus/).
+# Namespace kube-system не под baseline default deny: отдельные CNP не нужны
+# (kube-apiserver -> metrics-server :10250 и metrics-server -> kubelet :10250).
+
+args:
+  # kind: сертификаты kubelet самоподписанные и без IP узлов в SAN — без этого флага scrape kubelet не проходит.
+  - --kubelet-insecure-tls
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 100Mi
+  limits:
+    memory: 200Mi

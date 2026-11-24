@@ -93,6 +93,7 @@ versions.env                     версии того, что ставится 
 cilium/values.yaml, NOTES.md     Cilium (KPR, Hubble, enforce) и заметки о datapath в kind
 policies/                        [GitOps] namespaces + CCNP default deny + CNP argocd / audit-logging / litellm / monitoring
 monitoring/prometheus/values.yaml   [GitOps] Prometheus (только server, хранение 24h/1GB): Argo CD + cAdvisor
+monitoring/metrics-server/values.yaml   [GitOps] metrics-server (Metrics API: kubectl top, HPA)
 audit/audit-policy.yaml          audit policy kube-apiserver (монтируется kind'ом)
 audit/shipper/values.yaml        [GitOps] Fluent Bit: audit.log -> GCP Cloud Logging (+ stdout для отладки)
 audit/shipper/secrets/           [GitOps] SealedSecret gcp-logging-sa
@@ -111,7 +112,7 @@ archive/e2e/                     временно: старый kind-конфи�
   (2026-11-23 подняты с 1.20.4 / 10.18.0; в живом кластере до пересоздания — старые, `make diff` покажет разницу.)
 - Приложения — `version` в `argocd/list.yaml`: podinfo 6.17.0.
 - Под Argo CD — `targetRevision` в `argocd/bootstrap/apps/*.yaml`: sealed-secrets 2.22.0 (контроллер v0.41.2), fluent-bit 0.58.3 (Fluent Bit 5.1.3),
-  prometheus 30.0.0 (Prometheus v3.16.0; определено `helm show chart` 2026-11-24).
+  prometheus 30.0.0 (Prometheus v3.16.0), metrics-server 3.14.0 (v0.9.0) — определено `helm show chart` 2026-11-24.
 - Helm-репозиторий Sealed Secrets переехал: `https://bitnami.github.io/sealed-secrets` (старый `bitnami-labs.github.io` отдаёт 404).
 - Локальный `kubeseal` v0.27.3 старше контроллера v0.41.2. Офлайн-запечатывание по `--cert` совместимо, но обновить стоит.
 
@@ -142,8 +143,12 @@ archive/e2e/                     временно: старый kind-конфи�
 - Prometheus — Application `prometheus` (`argocd/bootstrap/apps/40-prometheus.yaml`, проект `platform`, namespace `monitoring`):
   только server, scrape 30s, хранение 24h и не более 1 GB (PVC 2Gi), цели — Argo CD (8082/8083/8084) и cAdvisor kubelet
   (CPU/память контейнеров). Сеть: `policies/40-monitoring.yaml` + `argocd-metrics-from-prometheus` в `policies/10-argocd.yaml`.
-- AppProject `platform` (`argocd/bootstrap/project.yaml`) не под Argo CD: после правки (репозиторий prometheus-community,
-  destination `monitoring`) применить `make argocd-bootstrap`, иначе Application `prometheus` будет InvalidSpecError.
+- metrics-server — Application `metrics-server` (`argocd/bootstrap/apps/41-metrics-server.yaml`, namespace `kube-system`):
+  Metrics API для `kubectl top` и HPA, только последний срез в памяти. В kind нужен `--kubelet-insecure-tls`
+  (сертификаты kubelet самоподписанные). kube-system вне baseline default deny, CNP не нужны.
+- AppProject `platform` (`argocd/bootstrap/project.yaml`) не под Argo CD: после правки (репозитории prometheus-community
+  и metrics-server, destination `monitoring`, кластерный kind `APIService`) применить `make argocd-bootstrap`,
+  иначе новые Application будут InvalidSpecError / ComparisonError.
 ### Пароль admin Argo CD
 
 | Secret (`argocd`) | Что внутри |
